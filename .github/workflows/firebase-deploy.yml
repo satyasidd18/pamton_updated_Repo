@@ -23,5 +23,5 @@ jobs:
 
       - name: Deploy to Firebase
         env: 
-          FIREBASE_TOKEN: ${{"01rUawlTb9cCvCgYIARAAGAESNwF-L9IrN9_ZDbPMgviBJJ1fpLBxZr4Cxuni3kFyx3O8eg8YWvGzKp6BWLNmyB_HkoqA69ek-BI" }}  # Pass secret to Firebase CLI
+          FIREBASE_TOKEN: ${{secrets.FIREBASE_TOKEN}}  # Pass secret to Firebase CLI
         run: firebase deploy --only hosting
