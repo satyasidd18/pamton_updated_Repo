@@ -16,5 +16,6 @@ public class RecruiterProfileResponse {
     private String companyName;
     private String phoneNumber;
     private String jobTitle;
-    private String roleName; 
+    private String roleName;
+    private Boolean profileCompleted;
 }
