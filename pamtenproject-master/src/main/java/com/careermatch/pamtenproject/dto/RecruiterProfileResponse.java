@@ -9,13 +9,9 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
 public class RecruiterProfileResponse {
     private String userId;
-    private String fullName;       // ✅ Add this
+    private String fullName;
     private String email;
     private String companyName;
     private String phoneNumber;
