@@ -16,4 +16,5 @@ public class RecruiterProfileResponse {
     private String companyName;
     private String phoneNumber;
     private String jobTitle;
+    private String roleName; 
 }
