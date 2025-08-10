@@ -10,7 +10,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class RecruiterProfileResponse {
-    private Long userId;
+    private String userId;
     private String name;
     private String email;
     private String companyName;
