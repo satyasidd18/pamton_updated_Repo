@@ -1,5 +1,15 @@
 package com.careermatch.pamtenproject.dto;
 
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+
 public class RecruiterProfileResponse {
     private Long userId;          // From User
     private String name;          // Recruiter's full name
