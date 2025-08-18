@@ -1,12 +1,14 @@
 package com.careermatch.pamtenproject.service;
 
 import com.careermatch.pamtenproject.dto.*;
+import com.careermatch.pamtenproject.exception.*;
 import com.careermatch.pamtenproject.model.Role;
 import com.careermatch.pamtenproject.model.User;
 import com.careermatch.pamtenproject.repository.RoleRepository;
 import com.careermatch.pamtenproject.repository.UserRepository;
 import com.careermatch.pamtenproject.security.JwtUtil;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -15,6 +17,7 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AuthService {
 
     private final UserRepository userRepository;
@@ -48,27 +51,29 @@ public class AuthService {
     }
 
     public RegistrationResponse registerUser(SignupRequest request) {
+        log.info("Registering new user with email: {}", request.getEmail());
+
         // Check if user already exists
         if (userRepository.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("User already exists with this email.");
+            throw new UserAlreadyExistsException("User already exists with this email.");
         }
 
         // Validate role
         if (!"Candidate".equalsIgnoreCase(request.getRoleName()) &&
                 !"Recruiter".equalsIgnoreCase(request.getRoleName())) {
-            throw new RuntimeException("Invalid role. Must be 'Candidate' or 'Recruiter'.");
+            throw new InvalidRoleException("Invalid role. Must be 'Candidate' or 'Recruiter'.");
         }
 
         // Special validation for recruiters
         if ("Recruiter".equalsIgnoreCase(request.getRoleName())) {
             if (!request.getEmail().toLowerCase().endsWith("@pamten.com")) {
-                throw new RuntimeException("Recruiter registration is restricted to @pamten.com email addresses.");
+                throw new BusinessRuleViolationException("Recruiter registration is restricted to @pamten.com email addresses.");
             }
         }
 
         // Find role
         Role role = roleRepository.findByRoleName(request.getRoleName())
-                .orElseThrow(() -> new RuntimeException("Role not found: " + request.getRoleName()));
+                .orElseThrow(() -> new InvalidRoleException("Role not found: " + request.getRoleName()));
 
         // Generate unique user ID
         String userId = generateCustomUserId(request.getFullName());
@@ -94,8 +99,10 @@ public class AuthService {
             emailService.sendWelcomeEmail(user.getEmail(), user.getFullName(), userId, role.getRoleName());
         } catch (Exception e) {
             // Log the error but don't fail registration
-            System.err.println("Failed to send email: " + e.getMessage());
+            log.error("Failed to send email: {}", e.getMessage());
         }
+
+        log.info("User registered successfully with ID: {}", userId);
 
         // Return response with user details
         return RegistrationResponse.builder()
@@ -109,24 +116,33 @@ public class AuthService {
     }
 
     public LoginResponse loginUser(LoginRequest request) {
+        log.info("Login attempt for user ID: {}", request.getUserId());
+
         User user = userRepository.findByUserId(request.getUserId())
-                .orElseThrow(() -> new RuntimeException("Invalid userId or password"));
+                .orElseThrow(() -> new InvalidCredentialsException("Invalid userId or password"));
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            throw new RuntimeException("Invalid userId or password");
+            throw new InvalidCredentialsException("Invalid userId or password");
         }
 
         if (!user.getIsActive()) {
-            throw new RuntimeException("Account is deactivated");
+            throw new AccountDeactivatedException("Account is deactivated");
         }
 
         String token = jwtUtil.generateToken(user.getEmail(), user.getRole().getRoleName());
+
+        log.info("User logged in successfully: {}", request.getUserId());
+
         return new LoginResponse(token, user.getRole().getRoleName(), user.getEmail(), user.getUserId(), user.getProfileCompleted());
     }
 
     public UserProfileResponse getUserProfile(String userId) {
+        log.info("Fetching profile for user: {}", userId);
+
         User user = userRepository.findByUserId(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new UserNotFoundException("User not found"));
+
+        log.info("Profile fetched successfully for user: {}", userId);
 
         return UserProfileResponse.builder()
                 .userId(user.getUserId())
@@ -140,19 +156,27 @@ public class AuthService {
     }
 
     public void updatePassword(UpdatePasswordRequest request) {
+        log.info("Updating password for user: {}", request.getUserId());
+
         User user = userRepository.findByUserId(request.getUserId())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new UserNotFoundException("User not found"));
+
         if (!passwordEncoder.matches(request.getOldPassword(), user.getPassword())) {
-            throw new RuntimeException("Old password is incorrect");
+            throw new InvalidCredentialsException("Old password is incorrect");
         }
+
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
+
+        log.info("Password updated successfully for user: {}", request.getUserId());
     }
 
     public void forgotPassword(String email) {
+        log.info("Password reset requested for email: {}", email);
+
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new UserNotFoundException("User not found"));
 
         String token = UUID.randomUUID().toString();
         user.setResetToken(token);
@@ -160,25 +184,34 @@ public class AuthService {
         userRepository.save(user);
 
         emailService.sendPasswordResetEmail(user.getEmail(), token);
+
+        log.info("Password reset email sent to: {}", email);
     }
 
     public void resetPassword(String token, String newPassword) {
+        log.info("Password reset attempt with token: {}", token);
+
         User user = userRepository.findByResetToken(token)
-                .orElseThrow(() -> new RuntimeException("Invalid or expired reset token"));
+                .orElseThrow(() -> new InvalidInputException("Invalid or expired reset token"));
 
         if (user.getResetTokenExpiry() == null || user.getResetTokenExpiry().isBefore(LocalDateTime.now())) {
-            throw new RuntimeException("Reset token has expired");
+            throw new TokenExpiredException("Reset token has expired");
         }
 
         user.setPassword(passwordEncoder.encode(newPassword));
         user.setResetToken(null);
         user.setResetTokenExpiry(null);
         userRepository.save(user);
+
+        log.info("Password reset successful for user: {}", user.getUserId());
     }
 
     public void updateProfile(UpdateProfileRequest request) {
+        log.info("Updating profile for user: {}", request.getUserId());
+
         User user = userRepository.findByUserId(request.getUserId())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new UserNotFoundException("User not found"));
+
         if (request.getFullName() != null && !request.getFullName().isEmpty()) {
             user.setFullName(request.getFullName());
         }
@@ -187,5 +220,7 @@ public class AuthService {
         }
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
+
+        log.info("Profile updated successfully for user: {}", request.getUserId());
     }
 }

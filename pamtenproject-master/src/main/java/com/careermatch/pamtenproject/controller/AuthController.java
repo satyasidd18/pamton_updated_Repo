@@ -4,11 +4,13 @@ import com.careermatch.pamtenproject.dto.*;
 import com.careermatch.pamtenproject.service.AuthService;
 import com.careermatch.pamtenproject.model.Gender;
 import com.careermatch.pamtenproject.repository.GenderRepository;
+import com.careermatch.pamtenproject.security.JwtBlacklistService;
+import com.careermatch.pamtenproject.security.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import com.careermatch.pamtenproject.dto.UpdatePasswordRequest;
-import com.careermatch.pamtenproject.dto.UpdateProfileRequest;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 
 import java.util.List;
 
@@ -19,65 +21,47 @@ public class AuthController {
 
     private final AuthService authService;
     private final GenderRepository genderRepository;
+    private final JwtBlacklistService jwtBlacklistService;
+    private final JwtUtil jwtUtil;
 
     @PostMapping("/register")
-    public ResponseEntity<?> registerUser(@RequestBody SignupRequest request) {
-        try {
-            RegistrationResponse response = authService.registerUser(request);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
-        }
+    public ResponseEntity<RegistrationResponse> registerUser(@Valid @RequestBody SignupRequest request) {
+        RegistrationResponse response = authService.registerUser(request);
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> loginUser(@RequestBody LoginRequest request) {
-        try {
-            LoginResponse response = authService.loginUser(request);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
-        }
+    public ResponseEntity<LoginResponse> loginUser(@Valid @RequestBody LoginRequest request) {
+        LoginResponse response = authService.loginUser(request);
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/profile/{userId}")
-    public ResponseEntity<?> getUserProfile(@PathVariable String userId) {
-        try {
-            UserProfileResponse response = authService.getUserProfile(userId);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
-        }
+    public ResponseEntity<UserProfileResponse> getUserProfile(
+            @PathVariable @NotBlank String userId) {
+        UserProfileResponse response = authService.getUserProfile(userId);
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/update-password")
-    public ResponseEntity<?> updatePassword(@RequestBody UpdatePasswordRequest request) {
-        try {
-            authService.updatePassword(request);
-            return ResponseEntity.ok("Password updated successfully!");
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
-        }
+    public ResponseEntity<String> updatePassword(
+            @Valid @RequestBody UpdatePasswordRequest request) {
+        authService.updatePassword(request);
+        return ResponseEntity.ok("Password updated successfully!");
     }
 
     @PostMapping("/forgot-password")
-    public ResponseEntity<?> forgotPassword(@RequestBody ForgotPasswordRequest request) {
-        try {
-            authService.forgotPassword(request.getEmail());
-            return ResponseEntity.ok("Password reset email sent successfully");
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
-        }
+    public ResponseEntity<String> forgotPassword(
+            @Valid @RequestBody ForgotPasswordRequest request) {
+        authService.forgotPassword(request.getEmail());
+        return ResponseEntity.ok("Password reset email sent successfully");
     }
 
     @PostMapping("/reset-password")
-    public ResponseEntity<?> resetPassword(@RequestBody ResetPasswordRequest request) {
-        try {
-            authService.resetPassword(request.getToken(), request.getNewPassword());
-            return ResponseEntity.ok("Password reset successfully");
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
-        }
+    public ResponseEntity<String> resetPassword(
+            @Valid @RequestBody ResetPasswordRequest request) {
+        authService.resetPassword(request.getToken(), request.getNewPassword());
+        return ResponseEntity.ok("Password reset successfully");
     }
 
     @GetMapping("/genders")
@@ -86,12 +70,21 @@ public class AuthController {
     }
 
     @PostMapping("/update-profile")
-    public ResponseEntity<?> updateProfile(@RequestBody UpdateProfileRequest request) {
-        try {
-            authService.updateProfile(request);
-            return ResponseEntity.ok("Profile updated successfully!");
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
+    public ResponseEntity<String> updateProfile(
+            @Valid @RequestBody UpdateProfileRequest request) {
+        authService.updateProfile(request);
+        return ResponseEntity.ok("Profile updated successfully!");
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<String> logout(
+            @RequestHeader("Authorization") @NotBlank String authHeader) {
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            // Add token to blacklist
+            jwtBlacklistService.blacklistToken(token, jwtUtil.extractExpiration(token).getTime());
+            return ResponseEntity.ok("Logged out successfully");
         }
+        return ResponseEntity.badRequest().body("Invalid authorization header");
     }
 }

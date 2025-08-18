@@ -18,8 +18,12 @@ public class AdminController {
 
     @GetMapping("/users")
     @PreAuthorize("hasAuthority('Admin')")
-    public ResponseEntity<List<User>> getAllUsers() {
-        return ResponseEntity.ok(userRepository.findAll());
+    public ResponseEntity<?> getAllUsers() {
+        try {
+            List<User> users = userRepository.findAll();
+            return ResponseEntity.ok(users);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body("Error: " + e.getMessage());
+        }
     }
 }
-

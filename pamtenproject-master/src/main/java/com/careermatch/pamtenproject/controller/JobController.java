@@ -1,19 +1,16 @@
 package com.careermatch.pamtenproject.controller;
 
-import com.careermatch.pamtenproject.dto.JobListingPageResponse;
-import com.careermatch.pamtenproject.dto.JobListingResponse;
-import com.careermatch.pamtenproject.dto.JobPostRequest;
-import com.careermatch.pamtenproject.dto.JobUpdateRequest;
-import com.careermatch.pamtenproject.dto.JobResponse;
-import com.careermatch.pamtenproject.repository.UserRepository;
+import com.careermatch.pamtenproject.dto.*;
 import com.careermatch.pamtenproject.service.JobService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;  // Add this import
 import org.springframework.web.bind.annotation.*;
-import org.springframework.security.core.Authentication;
-import com.careermatch.pamtenproject.model.User;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 
 import java.util.List;
 
@@ -23,67 +20,47 @@ import java.util.List;
 public class JobController {
 
     private final JobService jobService;
-    private final UserRepository userRepository;
 
     @PostMapping("/post")
-    public ResponseEntity<?> postJob(@RequestBody JobPostRequest request) {
-        System.out.println("JobController: postJob called for userId=" + request.getUserId());
-        try {
-            JobResponse response = jobService.postJob(request);
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
-        }
+    @PreAuthorize("hasAuthority('Recruiter')")
+    public ResponseEntity<JobResponse> postJob(@Valid @RequestBody JobPostRequest request) {
+        JobResponse response = jobService.postJob(request);
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/all")
-    public ResponseEntity<?> getAllJobs(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size
-    ) {
-        try {
-            JobListingPageResponse jobs = jobService.getAllJobs(page, size);
-            return ResponseEntity.ok(jobs);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
-        }
+    public ResponseEntity<JobListingPageResponse> getAllJobs(
+            @RequestParam(defaultValue = "0") @Min(0) Integer page,
+            @RequestParam(defaultValue = "20") @Min(1) Integer size) {
+        JobListingPageResponse response = jobService.getAllJobs(page, size);
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/employer/{userId}")
-    public ResponseEntity<?> getJobsByEmployer(@PathVariable String userId) {
-        try {
-            List<JobResponse> jobs = jobService.getJobsByEmployer(userId);
-            return ResponseEntity.ok(jobs);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
-        }
+    public ResponseEntity<List<JobResponse>> getJobsByEmployer(
+            @PathVariable @NotBlank String userId) {
+        List<JobResponse> jobs = jobService.getJobsByEmployer(userId);
+        return ResponseEntity.ok(jobs);
     }
 
-    @PutMapping("update/{jobId}")
-    public ResponseEntity<?> updateJob(
-            @PathVariable Integer jobId,
-            @RequestBody JobUpdateRequest request,
-            Authentication authentication
-    ) {
-        try {
-            String email = authentication.getName();
-            User user = userRepository.findByEmail(email)
-                    .orElseThrow(() -> new RuntimeException("User not found"));
+    @PutMapping("/{jobId}")
+    @PreAuthorize("hasAuthority('Recruiter')")
+    public ResponseEntity<JobResponse> updateJob(
+            @PathVariable @Min(1) Integer jobId,
+            @Valid @RequestBody JobUpdateRequest request,
+            Authentication authentication) {
 
-            JobResponse updated = jobService.updateJob(jobId, request, user.getUserId());
-            return ResponseEntity.ok(updated);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
-        }
+        String userId = authentication.getName(); // Get userId from JWT token
+        JobResponse response = jobService.updateJob(jobId, request, userId);
+        return ResponseEntity.ok(response);
     }
-    
-    @DeleteMapping("delete/{jobId}/{userId}")
-    public ResponseEntity<?> deleteJob(@PathVariable Integer jobId, @PathVariable String userId) {
-        try {
-            jobService.deleteJob(jobId, userId);
-            return ResponseEntity.ok("Job deleted successfully");
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
-        }
+
+    @DeleteMapping("/{jobId}/{userId}")
+    @PreAuthorize("hasAuthority('Recruiter')")
+    public ResponseEntity<String> deleteJob(
+            @PathVariable @Min(1) Integer jobId,
+            @PathVariable @NotBlank String userId) {
+        jobService.deleteJob(jobId, userId);
+        return ResponseEntity.ok("Job deleted successfully");
     }
-} 
+}

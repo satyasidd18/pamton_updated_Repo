@@ -5,9 +5,11 @@ import com.careermatch.pamtenproject.dto.JobListingResponse;
 import com.careermatch.pamtenproject.dto.JobPostRequest;
 import com.careermatch.pamtenproject.dto.JobResponse;
 import com.careermatch.pamtenproject.dto.JobUpdateRequest;
+import com.careermatch.pamtenproject.exception.*;
 import com.careermatch.pamtenproject.model.*;
 import com.careermatch.pamtenproject.repository.*;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,6 +26,7 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class JobService {
 
     private final JobRepository jobRepository;
@@ -34,21 +37,24 @@ public class JobService {
 
     @Transactional
     public JobResponse postJob(JobPostRequest request) {
+        log.info("Posting new job for user: {}", request.getUserId());
+
         // Verify user is a recruiter with completed profile
         User user = userRepository.findByUserId(request.getUserId())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new UserNotFoundException("User not found"));
 
         if (!"Recruiter".equalsIgnoreCase(user.getRole().getRoleName())) {
-            throw new RuntimeException("Only recruiters can post jobs");
+            throw new UnauthorizedActionException("Only recruiters can post jobs");
         }
 
         if (!user.getProfileCompleted()) {
-            throw new RuntimeException("Please complete your profile before posting jobs");
+            throw new BusinessRuleViolationException("Please complete your profile before posting jobs");
         }
 
         // Get employer details
         Employer employer = employerRepository.findByUser_UserId(request.getUserId())
-                .orElseThrow(() -> new RuntimeException("Employer profile not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Employer profile not found"));
+
         // Create or find location
         Location location = createOrFindLocation(request);
 
@@ -78,6 +84,8 @@ public class JobService {
                 .collect(Collectors.toSet());
         job.setIndustries(industries);
 
+        log.info("Job posted successfully with ID: {} for user: {}", job.getJobId(), request.getUserId());
+
         // Build response
         return JobResponse.builder()
                 .jobId(job.getJobId())
@@ -102,12 +110,16 @@ public class JobService {
     }
 
     private Location createOrFindLocation(JobPostRequest request) {
+        log.debug("Creating or finding location for city: {}, state: {}, zip: {}",
+                request.getCity(), request.getState(), request.getZipCode());
+
         // Try to find existing location
         List<Location> existingLocations = locationRepository.findByCityAndState(
                 request.getCity(), request.getState());
 
         for (Location existing : existingLocations) {
             if (existing.getZipCode().equals(request.getZipCode())) {
+                log.debug("Found existing location: {}", existing.getLocationId());
                 return existing;
             }
         }
@@ -123,23 +135,37 @@ public class JobService {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        return locationRepository.save(newLocation);
+        Location savedLocation = locationRepository.save(newLocation);
+        log.debug("Created new location: {}", savedLocation.getLocationId());
+        return savedLocation;
     }
-    public JobListingPageResponse getAllJobs(int page, int size) {
-        Pageable pageable = PageRequest.of(page, size);
-        Page<Job> jobPage = jobRepository.findActiveJobsOrderByPostedDateDesc(pageable);
 
-        return JobListingPageResponse.builder()
-                .jobs(jobPage.getContent().stream()
-                        .map(this::convertToJobListingResponse)
-                        .collect(Collectors.toList()))
-                .currentPage(page)
-                .totalPages(jobPage.getTotalPages())
-                .totalElements(jobPage.getTotalElements())
-                .pageSize(size)
-                .hasNext(jobPage.hasNext())
-                .hasPrevious(jobPage.hasPrevious())
-                .build();
+    public JobListingPageResponse getAllJobs(int page, int size) {
+        log.info("Fetching all jobs with page: {}, size: {}", page, size);
+
+        try {
+            Pageable pageable = PageRequest.of(page, size);
+            Page<Job> jobPage = jobRepository.findActiveJobsOrderByPostedDateDesc(pageable);
+
+            JobListingPageResponse response = JobListingPageResponse.builder()
+                    .jobs(jobPage.getContent().stream()
+                            .map(this::convertToJobListingResponse)
+                            .collect(Collectors.toList()))
+                    .currentPage(page)
+                    .totalPages(jobPage.getTotalPages())
+                    .totalElements(jobPage.getTotalElements())
+                    .pageSize(size)
+                    .hasNext(jobPage.hasNext())
+                    .hasPrevious(jobPage.hasPrevious())
+                    .build();
+
+            log.info("Found {} jobs on page {}", response.getJobs().size(), page);
+            return response;
+
+        } catch (Exception e) {
+            log.error("Failed to fetch jobs: {}", e.getMessage());
+            throw new BusinessRuleViolationException("Failed to fetch jobs: " + e.getMessage(), e);
+        }
     }
 
     private JobListingResponse convertToJobListingResponse(Job job) {
@@ -154,67 +180,96 @@ public class JobService {
     }
 
     public List<JobResponse> getJobsByEmployer(String userId) {
-        Employer employer = employerRepository.findByUser_UserId(userId)
-                .orElseThrow(() -> new RuntimeException("Employer not found"));
+        log.info("Fetching jobs for employer: {}", userId);
 
-        List<Job> jobs = jobRepository.findByEmployerEmployerId(employer.getEmployerId());
+        try {
+            Employer employer = employerRepository.findByUser_UserId(userId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Employer not found"));
 
-        return jobs.stream().map(this::convertToJobResponse).collect(Collectors.toList());
+            List<Job> jobs = jobRepository.findByEmployerEmployerId(employer.getEmployerId());
+
+            log.info("Found {} jobs for employer: {}", jobs.size(), userId);
+
+            return jobs.stream().map(this::convertToJobResponse).collect(Collectors.toList());
+
+        } catch (Exception e) {
+            log.error("Failed to fetch jobs for employer {}: {}", userId, e.getMessage());
+            throw new BusinessRuleViolationException("Failed to fetch jobs: " + e.getMessage(), e);
+        }
     }
 
     public JobResponse updateJob(Integer jobId, JobUpdateRequest request, String userId) {
-        Job job = jobRepository.findById(jobId)
-                .orElseThrow(() -> new RuntimeException("Job not found"));
+        log.info("Updating job: {} for user: {}", jobId, userId);
 
-        // SECURITY CHECK: Validate that this user owns the job
-        if (!job.getEmployer().getUser().getUserId().equals(userId)) {
-            throw new RuntimeException("You are not authorized to update this job");
+        try {
+            Job job = jobRepository.findById(jobId)
+                    .orElseThrow(() -> new JobNotFoundException("Job not found"));
+
+            // SECURITY CHECK: Validate that this user owns the job
+            if (!job.getEmployer().getUser().getUserId().equals(userId)) {
+                throw new UnauthorizedActionException("You are not authorized to update this job");
+            }
+
+            // Update job fields
+            job.setTitle(request.getTitle());
+            job.setDescription(request.getDescription());
+            job.setRequiredSkills(request.getRequiredSkills());
+            job.setJobType(request.getJobType());
+            job.setBillRate(request.getBillRate());
+            job.setDurationMonths(request.getDurationMonths());
+
+            // Create or find updated location
+            JobPostRequest tempRequest = new JobPostRequest();
+            tempRequest.setCity(request.getCity());
+            tempRequest.setState(request.getState());
+            tempRequest.setZipCode(request.getZipCode());
+            tempRequest.setCountry(request.getCountry());
+            tempRequest.setRegion(request.getRegion());
+            tempRequest.setStreetAddress(request.getStreetAddress());
+
+            Location location = createOrFindLocation(tempRequest);
+            job.setLocation(location);
+
+            // Update industries
+            Set<Industry> industries = request.getIndustryNames().stream()
+                    .map(name -> industryRepository.findByIndustryName(name).orElse(null))
+                    .filter(industry -> industry != null)
+                    .collect(Collectors.toSet());
+            job.setIndustries(industries);
+
+            job.setUpdatedAt(LocalDateTime.now());
+            jobRepository.save(job);
+
+            log.info("Job updated successfully: {} for user: {}", jobId, userId);
+
+            return convertToJobResponse(job);
+
+        } catch (Exception e) {
+            log.error("Failed to update job {}: {}", jobId, e.getMessage());
+            throw new BusinessRuleViolationException("Failed to update job: " + e.getMessage(), e);
         }
-
-        // Update job fields
-        job.setTitle(request.getTitle());
-        job.setDescription(request.getDescription());
-        job.setRequiredSkills(request.getRequiredSkills());
-        job.setJobType(request.getJobType());
-        job.setBillRate(request.getBillRate());
-        job.setDurationMonths(request.getDurationMonths());
-
-        // Create or find updated location
-        JobPostRequest tempRequest = new JobPostRequest();
-        tempRequest.setCity(request.getCity());
-        tempRequest.setState(request.getState());
-        tempRequest.setZipCode(request.getZipCode());
-        tempRequest.setCountry(request.getCountry());
-        tempRequest.setRegion(request.getRegion());
-        tempRequest.setStreetAddress(request.getStreetAddress());
-
-        Location location = createOrFindLocation(tempRequest);
-        job.setLocation(location);
-
-        // Update industries
-        Set<Industry> industries = request.getIndustryNames().stream()
-                .map(name -> industryRepository.findByIndustryName(name).orElse(null))
-                .filter(industry -> industry != null)
-                .collect(Collectors.toSet());
-        job.setIndustries(industries);
-
-        job.setUpdatedAt(LocalDateTime.now());
-        jobRepository.save(job);
-
-        return convertToJobResponse(job);
     }
 
     public void deleteJob(Integer jobId, String userId) {
-        Job job = jobRepository.findById(jobId)
-            .orElseThrow(() -> new RuntimeException("Job not found"));
+        log.info("Deleting job: {} for user: {}", jobId, userId);
 
-        // Validate that this user owns the job
-        if (!job.getEmployer().getUser().getUserId().equals(userId)) {
-            throw new RuntimeException("You are not authorized to delete this job");
+        try {
+            Job job = jobRepository.findById(jobId)
+                    .orElseThrow(() -> new JobNotFoundException("Job not found"));
+
+            // Validate that this user owns the job
+            if (!job.getEmployer().getUser().getUserId().equals(userId)) {
+                throw new UnauthorizedActionException("You are not authorized to delete this job");
+            }
+
+            jobRepository.delete(job);
+            log.info("Job deleted successfully: {} for user: {}", jobId, userId);
+
+        } catch (Exception e) {
+            log.error("Failed to delete job {}: {}", jobId, e.getMessage());
+            throw new BusinessRuleViolationException("Failed to delete job: " + e.getMessage(), e);
         }
-
-        jobRepository.delete(job);
-    } 
+    }
 
     private JobResponse convertToJobResponse(Job job) {
         return JobResponse.builder()
@@ -239,5 +294,4 @@ public class JobService {
                         job.getIndustries().stream().map(Industry::getIndustryName).collect(Collectors.toList()) : null)
                 .build();
     }
-    
 }
